@@ -19,8 +19,7 @@ public class MyRPCClient {
             objectOutputStream.writeInt(new Random().nextInt());
             objectOutputStream.flush();
             // 服务器查询数据，返回对应的对象
-            Object o = objectInputStream.readObject();
-            User user = (User) o;
+            User user  = (User) objectInputStream.readObject();
             System.out.println("服务端返回的User:"+user);
 
         } catch (IOException | ClassNotFoundException e) {

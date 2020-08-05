@@ -20,21 +20,21 @@ public class MyRPCServer {
                 // 开启一个线程去处理
                 new Thread(()->{
                     try {
-                        ObjectOutputStream objectOutputStream = new ObjectOutputStream(socket.getOutputStream());
-                        ObjectInputStream objectInputStream = new ObjectInputStream(socket.getInputStream());
+                        ObjectOutputStream oos = new ObjectOutputStream(socket.getOutputStream());
+                        ObjectInputStream ois = new ObjectInputStream(socket.getInputStream());
                         // 读取客户端传过来的id
-                        Integer id = objectInputStream.readInt();
+                        Integer id = ois.readInt();
                         User userByUserId = userService.getUserByUserId(id);
                         // 写入User对象给客户端
-                        objectOutputStream.writeObject(userByUserId);
-                        objectOutputStream.flush();
-                    }catch (IOException e){
+                        oos.writeObject(userByUserId);
+                        oos.flush();
+                    } catch (IOException e){
                         e.printStackTrace();
                         System.out.println("从IO中读取数据错误");
                     }
                 }).start();
-
             }
+
         } catch (IOException e) {
             e.printStackTrace();
             System.out.println("服务器启动失败");
