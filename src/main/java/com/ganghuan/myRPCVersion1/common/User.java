@@ -1,4 +1,4 @@
-package com.ganghuan.myRPCVersion0.common;
+package com.ganghuan.myRPCVersion1.common;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

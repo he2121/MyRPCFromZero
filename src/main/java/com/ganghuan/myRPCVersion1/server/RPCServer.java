@@ -13,7 +13,7 @@ import java.lang.reflect.Method;
 import java.net.ServerSocket;
 import java.net.Socket;
 
-public class MyRPCServer {
+public class RPCServer {
     public static void main(String[] args) {
 
         UserServiceImpl userService = new UserServiceImpl();

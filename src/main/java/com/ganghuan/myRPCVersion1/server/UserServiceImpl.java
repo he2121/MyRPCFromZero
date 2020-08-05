@@ -1,7 +1,7 @@
-package com.ganghuan.myRPCVersion0.server;
+package com.ganghuan.myRPCVersion1.server;
 
-import com.ganghuan.myRPCVersion0.common.User;
-import com.ganghuan.myRPCVersion0.service.UserService;
+import com.ganghuan.myRPCVersion1.common.User;
+import com.ganghuan.myRPCVersion1.service.UserService;
 
 import java.util.Random;
 import java.util.UUID;
@@ -16,5 +16,10 @@ public class UserServiceImpl implements UserService {
                 .id(id)
                 .sex(random.nextBoolean()).build();
         return user;
+    }
+    @Override
+    public Integer insertUserId(User user) {
+        System.out.println("插入数据成功："+user);
+        return 1;
     }
 }

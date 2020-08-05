@@ -8,7 +8,7 @@ import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.util.Random;
 
-public class MyRPCClient {
+public class RPCClient {
     public static void main(String[] args) {
         try {
             // 建立Socket连接

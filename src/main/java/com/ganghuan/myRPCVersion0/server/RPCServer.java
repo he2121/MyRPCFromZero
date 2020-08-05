@@ -8,7 +8,7 @@ import java.io.ObjectOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 
-public class MyRPCServer {
+public class RPCServer {
     public static void main(String[] args) {
         UserServiceImpl userService = new UserServiceImpl();
         try {
