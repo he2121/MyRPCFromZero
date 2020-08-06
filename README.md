@@ -31,18 +31,18 @@ client 调用远程方法-> request序列化 -> 协议编码 -> 网络传输-> �
 
 从0开始的RPC的迭代过程：
 
-- [version0版本](#0 一个最简单的RPC调用)：以不到百行的代码完成一个RPC例子
+- [version0版本](#0.一个最简单的RPC调用)：以不到百行的代码完成一个RPC例子
 
-- [version1版本](#1 版本1)：完善通用消息格式（request，response），客户端的动态代理完成对request消息格式的封装
+- [version1版本](#1.MyRPC版本1)：完善通用消息格式（request，response），客户端的动态代理完成对request消息格式的封装
 
-- [version2版本](#)：支持服务端暴露多个服务接口， 服务端程序抽象化，规范化
+- [version2版本](#2.MyRPC版本2)：支持服务端暴露多个服务接口， 服务端程序抽象化，规范化
 
-- [version3版本](#)：使用高性能网络框架netty完成传输，自定义协议，支持多种序列化方式（java序列化，json...）
+- [version3版本](#3.MyRPC版本3)：使用高性能网络框架netty完成传输，自定义协议，支持多种序列化方式（java序列化，json...）
 - [version4版本](#):   服务器注册与发现的实现，zookeeper作为注册中心
 - [version5版本](#):   自动注销与负载均衡的策略的实现
 - [version6版本](#): ...
 
-## 0 一个最简单的RPC调用
+## 0.一个最简单的RPC调用
 
 #### **背景知识**
 
@@ -195,7 +195,7 @@ public class RPCServer {
 
 
 
-## 1 MyRPC版本1
+## 1.MyRPC版本1
 
 #### 背景知识
 
@@ -426,7 +426,7 @@ public class RPCClient {
 
 
 
-## 2 MyRPC 版本2
+## 2.MyRPC 版本2
 
 #### 背景知识
 
