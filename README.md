@@ -1042,10 +1042,281 @@ public class NettyClientHandler extends SimpleChannelInboundHandler<RPCResponse>
 
 #### 总结
 
-此版本我们完成了客户端的重构，使之能够支持多种版本客户端的扩展
+此版本我们完成了客户端的重构，使之能够支持多种版本客户端的扩展（实现RPCClient接口）
 
-使用netty实现了客户端与服务端的通信
+并且使用netty实现了客户端与服务端的通信
 
 #### 此RPC最大痛点
 
 1. java自带序列化方式（Java序列化写入不仅是完整的类名，也包含整个类的定义，包含所有被引用的类），不够通用，不够高效
+
+
+
+------
+
+
+
+### 4.MyRPC版本4
+
+#### 背景知识
+
+- 各种序列化方式以及比较，（Java原生序列化， json，protobuf，kryo..）[参考博客](https://www.jianshu.com/p/937883b6b2e5)
+- 自定义协议
+- java IO 了解
+- TCP粘包问题，解决方式
+
+#### 本节问题
+
+- 如何设计并完成自己的协议?
+
+  答：自己实现encode与decode
+
+#### 升级过程
+
+在前面的RPC版本中， 我们都是使用的java自带的序列化的方式，事实上使用这种方式性能是很低的（序列化后的字节数组， 解码编码速度），而且在netty服务端，我们使用的是netty自带的编码器，简单的传输了一个   **消息长度（4个字节）| 序列化后的数据**   格式的数据。 在这里我们要自定义我们的传输格式和编解码。
+
+下面是我的初步对我的自定义格式的设计了， 先读取消息类型（Requst， Response， ping， pong）， 序列化方式（原生， json，kryo， protobuf..）， 加上消息长度：防止粘包， 再根据长度读取data
+
+| 消息类型（2Byte） | 序列化方式 2Byte | 消息长度 4Byte   |
+| :---------------- | ---------------- | ---------------- |
+| 序列化后的Data….  | 序列化后的Data…  | 序列化后的Data…. |
+
+ 前提处理： maven pom文件中引入fastjson包， RPCResponse中需要加入DataType字段，因为其它序列化方式（json）无法得到Data的类型，
+
+**升级1：** 自定义编解码器
+
+序列化器的接口：
+
+```java
+public interface Serializer {
+    // 把对象序列化成字节数组
+    byte[] serialize(Object obj);
+    // 从字节数组反序列化成消息, 使用java自带序列化方式不用messageType也能得到相应的对象（序列化字节数组里包含类信息）
+    // 其它方式需指定消息格式，再根据message转化成相应的对象
+    Object deserialize(byte[] bytes, int messageType);
+    // 返回使用的序列器，是哪个
+    // 0：java自带序列化方式, 1: json序列化方式
+    int getType();
+    // 根据序号取出序列化器，暂时有两种实现方式，需要其它方式，实现这个接口即可
+    static Serializer getSerializerByCode(int code){
+        switch (code){
+            case 0:
+                return new ObjectSerializer();
+            case 1:
+                return new JsonSerializer();
+            default:
+                return null;
+        }
+    }
+}
+```
+
+encode类
+
+```java
+/**
+ * 依次按照自定义的消息格式写入，传入的数据为request或者response
+ * 需要持有一个serialize器，负责将传入的对象序列化成字节数组
+ */
+@AllArgsConstructor
+public class MyEncode extends MessageToByteEncoder {
+    private Serializer serializer;
+    
+    @Override
+    protected void encode(ChannelHandlerContext ctx, Object msg, ByteBuf out) throws Exception {
+        System.out.println(msg.getClass());
+        // 写入消息类型
+        if(msg instanceof RPCRequest){
+            out.writeShort(MessageType.REQUEST.getCode());
+        }
+        else if(msg instanceof RPCResponse){
+            out.writeShort(MessageType.RESPONSE.getCode());
+        }
+        // 写入序列化方式
+        out.writeShort(serializer.getType());
+        // 得到序列化数组
+        byte[] serialize = serializer.serialize(msg);
+        // 写入长度
+        out.writeInt(serialize.length);
+        // 写入序列化字节数组
+        out.writeBytes(serialize);
+    }
+}
+```
+
+decode类
+
+```java
+/**
+ * 按照自定义的消息格式解码数据
+ */
+@AllArgsConstructor
+public class MyDecode extends ByteToMessageDecoder {
+
+
+    @Override
+    protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) throws Exception {
+        // 1. 读取消息类型
+        short messageType = in.readShort();
+        // 现在还只支持request与response请求
+        if(messageType != MessageType.REQUEST.getCode() &&
+                messageType != MessageType.RESPONSE.getCode()){
+            System.out.println("暂不支持此种数据");
+            return;
+        }
+        // 2. 读取序列化的类型
+        short serializerType = in.readShort();
+        // 根据类型得到相应的序列化器
+        Serializer serializer = Serializer.getSerializerByCode(serializerType);
+        if(serializer == null)throw new RuntimeException("不存在对应的序列化器");
+        // 3. 读取数据序列化后的字节长度
+        int length = in.readInt();
+        // 4. 读取序列化数组
+        byte[] bytes = new byte[length];
+        in.readBytes(bytes);
+        // 用对应的序列化器解码字节数组
+        Object deserialize = serializer.deserialize(bytes, messageType);
+        out.add(deserialize);
+    }
+}
+```
+
+**升级2：** 支持不同的序列化器
+
+**Java 原生序列化**
+
+```java
+public class ObjectSerializer implements Serializer{
+
+    // 利用java IO 对象 -> 字节数组
+    @Override
+    public byte[] serialize(Object obj) {
+        byte[] bytes = null;
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        try {
+            ObjectOutputStream oos = new ObjectOutputStream(bos);
+            oos.writeObject(obj);
+            oos.flush();
+            bytes = bos.toByteArray();
+            oos.close();
+            bos.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return bytes;
+    }
+
+    // 字节数组 -> 对象
+    @Override
+    public Object deserialize(byte[] bytes, int messageType) {
+        Object obj = null;
+        ByteArrayInputStream bis = new ByteArrayInputStream(bytes);
+        try {
+            ObjectInputStream ois = new ObjectInputStream(bis);
+            obj = ois.readObject();
+            ois.close();
+            bis.close();
+        } catch (IOException | ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+        return obj;
+    }
+
+    // 0 代表java原生序列化器
+    @Override
+    public int getType() {
+        return 0;
+    }
+}
+```
+
+**Json序列化器**
+
+```java
+/**
+ * 由于json序列化的方式是通过把对象转化成字符串，丢失了Data对象的类信息，所以deserialize需要
+ * 了解对象对象的类信息，根据类信息把JsonObject -> 对应的对象
+ */
+public class JsonSerializer implements Serializer{
+    @Override
+    public byte[] serialize(Object obj) {
+        byte[] bytes = JSONObject.toJSONBytes(obj);
+        return bytes;
+    }
+
+    @Override
+    public Object deserialize(byte[] bytes, int messageType) {
+        Object obj = null;
+        // 传输的消息分为request与response
+        switch (messageType){
+            case 0:
+                RPCRequest request = JSON.parseObject(bytes, RPCRequest.class);
+                Object[] objects = new Object[request.getParams().length];
+                // 把json字串转化成对应的对象， fastjson可以读出基本数据类型，不用转化
+                for(int i = 0; i < objects.length; i++){
+                    Class<?> paramsType = request.getParamsTypes()[i];
+                    if (!paramsType.isAssignableFrom(request.getParams()[i].getClass())){
+                        objects[i] = JSONObject.toJavaObject((JSONObject) request.getParams()[i],request.getParamsTypes()[i]);
+                    }else{
+                        objects[i] = request.getParams()[i];
+                    }
+
+                }
+                request.setParams(objects);
+                obj = request;
+                break;
+            case 1:
+                RPCResponse response = JSON.parseObject(bytes, RPCResponse.class);
+                Class<?> dataType = response.getDataType();
+                if(! dataType.isAssignableFrom(response.getData().getClass())){
+                    response.setData(JSONObject.toJavaObject((JSONObject) response.getData(),dataType));
+                }
+                obj = response;
+                break;
+            default:
+                System.out.println("暂时不支持此种消息");
+                throw new RuntimeException();
+        }
+        return obj;
+    }
+    
+    // 1 代表着json序列化方式
+    @Override
+    public int getType() {
+        return 1;
+    }
+}
+```
+
+#### 结果
+
+在netty初始化类（客户端，服务器端）中添加解码器中使用自己定义的解码器：
+
+```java
+public class NettyClientInitializer extends ChannelInitializer<SocketChannel> {
+    @Override
+    protected void initChannel(SocketChannel ch) throws Exception {
+        ChannelPipeline pipeline = ch.pipeline();
+        // 使用自定义的编解码器
+        pipeline.addLast(new MyDecode());
+        // 编码需要传入序列化器，这里是json，还支持ObjectSerializer，也可以自己实现其他的
+        pipeline.addLast(new MyEncode(new JsonSerializer()));
+        pipeline.addLast(new NettyClientHandler());
+    }
+}
+```
+
+![image-20200809161933283](D:\笔记\netty\img\image-20200809161933283.png)
+
+成功启动!
+
+#### 总结
+
+在这版本中，我们自己定义的消息格式，使之支持多种消息类型，序列化方式，使用消息头加长度的方式解决粘包问题
+
+并且，实现了ObjectSerializer与JsonSerializer两种序列化器，也可以轻松扩展为其它序列化方式（实现Serialize接口）。
+
+#### 此版本最大痛点
+
+- 服务端与客户端通信的host与port预先就必须知道的，如果这个服务挂了或者换地址了，就很麻烦。扩展性也不强
