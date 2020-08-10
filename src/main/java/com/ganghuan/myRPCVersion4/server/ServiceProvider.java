@@ -14,20 +14,15 @@ import java.util.Set;
  */
 public class ServiceProvider {
     /**
-     * 一个实现类可能实现多个接口，所以这里把服务与接口分开了，
-     * 前面这两个概念是混合的
+     * 一个实现类可能实现多个服务接口，
      */
     private Map<String, Object> interfaceProvider;
-    private Set<String> services;
 
     public ServiceProvider(){
         this.interfaceProvider = new HashMap<>();
-        this.services = new HashSet<>();
     }
 
     public void provideServiceInterface(Object service){
-        String serviceName = service.getClass().getName();
-        if(!services.add(serviceName)) return;
         Class<?>[] interfaces = service.getClass().getInterfaces();
 
         for(Class clazz : interfaces){
