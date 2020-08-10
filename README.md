@@ -49,10 +49,10 @@ client 调用远程方法-> request序列化 -> 协议编码 -> 网络传输-> �
 - [version0版本](#0.一个最简单的RPC调用)：以不到百行的代码完成一个RPC例子
 - [version1版本](#1.MyRPC版本1)：完善通用消息格式（request，response），客户端的动态代理完成对request消息格式的封装
 - [version2版本](#2.MyRPC版本2)：支持服务端暴露多个服务接口， 服务端程序抽象化，规范化
-- [version3版本](#3.MyRPC版本3)：使用高性能网络框架netty的实现，客户端代码的重构
+- [version3版本](#3.MyRPC版本3)：使用高性能网络框架netty的实现网络通信，以及客户端代码的重构
 - [version4版本](#4.MyRPC版本4)：自定义消息格式，支持多种序列化方式
-- [version5版本](#):   服务器注册与发现的实现，zookeeper作为注册中心
-- [version6版本](#):   自动注销与负载均衡的策略的实现
+- [version5版本](#5.MyRPC版本5):   服务器注册与发现的实现，zookeeper作为注册中心
+- [version6版本](#MyRPC版本6):   自动注销与负载均衡的策略的实现
 - [version7版本](#): ...
 
 
@@ -665,7 +665,7 @@ public class WorkThread implements Runnable{
 
 服务端代码第一次重构完毕。 
 
-**更新3：** 服务暴露类，这里回到了更新1**，我们发现服务接口名是我们**直接手写的，这里其实可以利用反射自动得到
+**更新3：** 服务暴露类，这里回到了更新1**，我们发现服务接口名是我们**直接手写的，这里其实可以利用class对象自动得到
 
 ```java
 /**
@@ -676,20 +676,16 @@ public class WorkThread implements Runnable{
  */
 public class ServiceProvider {
     /**
-     * 一个实现类可能实现多个接口，所以这里把服务与接口分开了，
-     * 前面这两个概念是混合的
+     * 一个实现类可能实现多个接口
      */
     private Map<String, Object> interfaceProvider;
-    private Set<String> services;
 
     public ServiceProvider(){
         this.interfaceProvider = new HashMap<>();
-        this.services = new HashSet<>();
     }
 
     public void provideServiceInterface(Object service){
         String serviceName = service.getClass().getName();
-        if(!services.add(serviceName)) return;
         Class<?>[] interfaces = service.getClass().getInterfaces();
 
         for(Class clazz : interfaces){
@@ -1319,4 +1315,244 @@ public class NettyClientInitializer extends ChannelInitializer<SocketChannel> {
 
 #### 此版本最大痛点
 
-- 服务端与客户端通信的host与port预先就必须知道的，如果这个服务挂了或者换地址了，就很麻烦。扩展性也不强
+- 服务端与客户端通信的host与port预先就必须知道的，每一个客户端都必须知道对应服务的ip与端口号， 并且如果服务挂了或者换地址了，就很麻烦。扩展性也不强
+
+
+
+------
+
+
+
+### 5.MyRPC版本5
+
+#### 背景知识
+
+- zookeeper安装， 基本概念
+- 了解curator开源zookeeper客户端中的使用
+
+#### 本节问题
+
+- 如何设计一个注册中心
+
+注册中心（如zookeeper）的地址是固定的（为了高可用一般是集群，我们看做黑盒即可）， 服务端上线时，在注册中心注册自己的服务与对应的地址，而客户端调用服务时，去注册中心根据服务名找到对应的服务端地址。
+
+zookeeper我们可以近似看作一个树形目录文件系统，是一个分布式协调应用，其它注册中心有EureKa， Nacos等
+
+#### 升级过程
+
+**前提**
+
+1. 下载解压Zookeeper [地址]（https://zookeeper.apache.org/releases.html）
+2. 学习一个zookeeper启动的例子 [官方例子](https://zookeeper.apache.org/doc/current/zookeeperStarted.html#sc_Download) 
+   1. zoo.cfg 修改dataDir为一个存在目录
+   2. windows启动命令: bin/zkServer.cmd
+3. java项目中引入Curator客户端，
+
+```xml
+<!--这个jar包应该依赖log4j,不引入log4j会有控制台会有warn，但不影响正常使用-->
+<dependency>
+    <groupId>org.apache.curator</groupId>
+    <artifactId>curator-recipes</artifactId>
+    <version>5.1.0</version>
+</dependency>
+```
+
+**更新1** ： 引入zookeeper作为注册中心
+
+启动本地zookeeper服务端，默认端口2181。zookeeper客户端测试如下：
+
+![image-20200810105040168](http://ganghuan.oss-cn-shenzhen.aliyuncs.com/img/image-20200810105040168.png)
+
+先定义服务注册接口
+
+```java
+// 服务注册接口，两大基本功能，注册：保存服务与地址。 查询：根据服务名查找地址
+public interface ServiceRegister {
+    void register(String serviceName, InetSocketAddress serverAddress);
+    InetSocketAddress serviceDiscovery(String serviceName);
+}
+```
+
+zookeeper服务注册接口的实现类
+
+```java
+public class ZkServiceRegister implements ServiceRegister{
+    // curator 提供的zookeeper客户端
+    private CuratorFramework client;
+    // zookeeper根路径节点
+    private static final String ROOT_PATH = "MyRPC";
+
+    // 这里负责zookeeper客户端的初始化，并与zookeeper服务端建立连接
+    public ZkServiceRegister(){
+        // 指数时间重试
+        RetryPolicy policy = new ExponentialBackoffRetry(1000, 3);
+        // zookeeper的地址固定，不管是服务提供者还是，消费者都要与之建立连接
+        // sessionTimeoutMs 与 zoo.cfg中的tickTime 有关系，
+        // zk还会根据minSessionTimeout与maxSessionTimeout两个参数重新调整最后的超时值。默认分别为tickTime 的2倍和20倍
+        // 使用心跳监听状态
+        this.client = CuratorFrameworkFactory.builder().connectString("127.0.0.1:2181")
+                .sessionTimeoutMs(40000).retryPolicy(policy).namespace(ROOT_PATH).build();
+        this.client.start();
+        System.out.println("zookeeper 连接成功");
+    }
+
+    @Override
+    public void register(String serviceName, InetSocketAddress serverAddress){
+        try {
+            // serviceName创建成永久节点，服务提供者下线时，不删服务名，只删地址
+            if(client.checkExists().forPath("/" + serviceName) == null){
+               client.create().creatingParentsIfNeeded().withMode(CreateMode.PERSISTENT).forPath("/" + serviceName); 
+            }
+            // 路径地址，一个/代表一个节点
+            String path = "/" + serviceName +"/"+ getServiceAddress(serverAddress);
+            // 临时节点，服务器下线就删除节点
+            client.create().creatingParentsIfNeeded().withMode(CreateMode.EPHEMERAL).forPath(path);
+        } catch (Exception e) {
+            System.out.println("此服务已存在");
+        }
+    }
+    // 根据服务名返回地址
+    @Override
+    public InetSocketAddress serviceDiscovery(String serviceName) {
+        try {
+            List<String> strings = client.getChildren().forPath("/" + serviceName);
+            // 这里默认用的第一个，后面加负载均衡
+            String string = strings.get(0);
+            return parseAddress(string);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    // 地址 -> XXX.XXX.XXX.XXX:port 字符串
+    private String getServiceAddress(InetSocketAddress serverAddress) {
+        return serverAddress.getHostName() +
+                ":" +
+                serverAddress.getPort();
+    }
+    // 字符串解析为地址
+    private InetSocketAddress parseAddress(String address) {
+        String[] result = address.split(":");
+        return new InetSocketAddress(result[0], Integer.parseInt(result[1]));
+    }
+}
+```
+
+**更新**2： 更新客户端得到服务器的方式， 服务端暴露服务时，注册到注册中心
+
+首先new client不需要传入host与name， 而在发送request时，从注册中心获得
+
+```java
+// 不需传host，port
+RPCClient rpcClient = new NettyRPCClient();
+```
+
+客户端的改造
+
+```java
+public class SimpleRPCClient implements RPCClient {
+    private String host;
+    private int port;
+    private ServiceRegister serviceRegister;
+    public SimpleRPCClient() {
+        // 初始化注册中心，建立连接
+        this.serviceRegister = new ZkServiceRegister();
+    }
+
+    // 客户端发起一次请求调用，Socket建立连接，发起请求Request，得到响应Response
+    // 这里的request是封装好的，不同的service需要进行不同的封装， 客户端只知道Service接口，需要一层动态代理根据反射封装不同的Service
+    public RPCResponse sendRequest(RPCRequest request) {
+        // 从注册中心获取host，port
+        InetSocketAddress address = serviceRegister.serviceDiscovery(request.getInterfaceName());
+        host = address.getHostName();
+        port = address.getPort();
+        
+        try {
+            Socket socket = new Socket(host, port);
+
+            ObjectOutputStream objectOutputStream = new ObjectOutputStream(socket.getOutputStream());
+            ObjectInputStream objectInputStream = new ObjectInputStream(socket.getInputStream());
+
+            System.out.println(request);
+            objectOutputStream.writeObject(request);
+            objectOutputStream.flush();
+
+            RPCResponse response = (RPCResponse) objectInputStream.readObject();
+
+            //System.out.println(response.getData());
+            return response;
+        } catch (IOException | ClassNotFoundException e) {
+            System.out.println();
+            return null;
+        }
+    }
+}
+```
+
+服务端的改造：服务端反而需要把自己的ip，端口给注册中心
+
+```java
+ServiceProvider serviceProvider = new ServiceProvider("127.0.0.1", 8899);
+```
+
+在服务暴露类加入注册的功能
+
+```java
+public class ServiceProvider {
+    /**
+     * 一个实现类可能实现多个服务接口，
+     */
+    private Map<String, Object> interfaceProvider;
+
+    private ServiceRegister serviceRegister;
+    private String host;
+    private int port;
+
+    public ServiceProvider(String host, int port){
+        // 需要传入服务端自身的服务的网络地址
+        this.host = host;
+        this.port = port;
+        this.interfaceProvider = new HashMap<>();
+        this.serviceRegister = new ZkServiceRegister();
+    }
+
+    public void provideServiceInterface(Object service){
+        Class<?>[] interfaces = service.getClass().getInterfaces();
+
+        for(Class clazz : interfaces){
+            // 本机的映射表
+            interfaceProvider.put(clazz.getName(),service);
+            // 在注册中心注册服务
+            serviceRegister.register(clazz.getName(),new InetSocketAddress(host,port));
+        }
+
+    }
+
+    public Object getService(String interfaceName){
+        return interfaceProvider.get(interfaceName);
+    }
+}
+```
+
+#### 结果
+
+成功运行！
+
+![image-20200810113516390](http://ganghuan.oss-cn-shenzhen.aliyuncs.com/img/image-20200810113516390.png)
+
+#### 总结
+
+此版本中我们加入了注册中心，终于一个完整的RPC框架三个角色都有了：服务提供者，服务消费者，注册中心
+
+#### 此版本最大痛点
+
+- 根据服务名查询地址时，我们返回的总是第一个IP，导致这个提供者压力巨大，而其它提供者调用不到
+
+
+
+------
+
+
+
+### 6.MyRPC版本6
