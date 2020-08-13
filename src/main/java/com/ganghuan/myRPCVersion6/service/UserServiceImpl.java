@@ -17,4 +17,9 @@ public class UserServiceImpl implements UserService {
         System.out.println("插入数据成功："+user);
         return 1;
     }
+
+    @Override
+    public String hello() {
+        return "Hello World!";
+    }
 }

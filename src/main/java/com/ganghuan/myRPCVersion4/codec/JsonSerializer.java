@@ -23,6 +23,9 @@ public class JsonSerializer implements Serializer{
         switch (messageType){
             case 0:
                 RPCRequest request = JSON.parseObject(bytes, RPCRequest.class);
+                // 修bug 参数为空 直接返回
+                if(request.getParams() == null) return request;
+
                 Object[] objects = new Object[request.getParams().length];
                 // 把json字串转化成对应的对象， fastjson可以读出基本数据类型，不用转化
                 for(int i = 0; i < objects.length; i++){

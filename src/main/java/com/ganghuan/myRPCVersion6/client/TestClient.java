@@ -25,6 +25,8 @@ public class TestClient {
 
         Blog blogById = blogService.getBlogById(10000);
         System.out.println("从服务端得到的blog为：" + blogById);
+        // 测试json调用空参数方法
+        System.out.println(userService.hello());
 
     }
 }

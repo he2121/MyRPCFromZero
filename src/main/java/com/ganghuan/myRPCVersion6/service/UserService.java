@@ -8,4 +8,6 @@ public interface UserService {
     User getUserByUserId(Integer id);
 
     Integer insertUserId(User user);
+
+    String hello();
 }
