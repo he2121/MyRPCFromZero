@@ -2,7 +2,7 @@ package com.ganghuan.myRPCVersion3.client;
 
 
 import com.ganghuan.myRPCVersion3.common.RPCRequest;
-import com.ganghuan.myRPCVersion3.common.RPCResponse;
+import io.netty.channel.ChannelFuture;
 import lombok.AllArgsConstructor;
 
 import java.lang.reflect.InvocationHandler;
@@ -20,10 +20,10 @@ public class RPCClientProxy implements InvocationHandler {
         RPCRequest request = RPCRequest.builder().interfaceName(method.getDeclaringClass().getName())
                 .methodName(method.getName())
                 .params(args).paramsTypes(method.getParameterTypes()).build();
-        //数据传输
-        RPCResponse response = client.sendRequest(request);
+        //数据传输(异步)
+        ChannelFuture future = client.sendRequest(request);
         //System.out.println(response);
-        return response.getData();
+        return future;
     }
     <T>T getProxy(Class<T> clazz){
         Object o = Proxy.newProxyInstance(clazz.getClassLoader(), new Class[]{clazz}, this);

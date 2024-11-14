@@ -34,7 +34,7 @@ public class NettyRPCServerHandler extends SimpleChannelInboundHandler<RPCReques
 
     RPCResponse getResponse(RPCRequest request) {
         // 得到服务名
-        String interfaceName = request.getInterfaceName();
+        String interfaceName = request.getInterfaceName()+"1";
         // 得到服务端相应服务实现类
         Object service = serviceProvider.getService(interfaceName);
         // 反射调用方法

@@ -2,8 +2,8 @@ package com.ganghuan.myRPCVersion3.client;
 
 
 import com.ganghuan.myRPCVersion3.common.RPCRequest;
-import com.ganghuan.myRPCVersion3.common.RPCResponse;
+import io.netty.channel.ChannelFuture;
 
 public interface RPCClient {
-    RPCResponse sendRequest(RPCRequest request);
+    ChannelFuture sendRequest(RPCRequest request);
 }
